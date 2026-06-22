@@ -1,70 +1,139 @@
-# RAG 파이프라인 - VM 실행 가이드
+# 뚝딱 (TookTak)
 
-이 폴더는 컨테이너 테스트에서 검증한 코드 구조를, 실제 VM(Ubuntu)에서
-BGE-M3 + Qdrant(Docker)로 그대로 동작시키기 위한 버전입니다.
+[![GitHub](https://img.shields.io/badge/GitHub-PDF__auto__maker-181717?logo=github&logoColor=white)](https://github.com/car216999/PDF_auto_maker)
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.137-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Ollama](https://img.shields.io/badge/Ollama-Qwen3_8B-000000?logo=ollama&logoColor=white)](https://ollama.com/)
+[![ChromaDB](https://img.shields.io/badge/Vector_DB-ChromaDB-FF6F61)](https://www.trychroma.com/)
+[![Tests](https://img.shields.io/badge/tests-37_passing-success)](backend/tests)
+[![External calls](https://img.shields.io/badge/외부_호출-0건-brightgreen)](#)
 
-## 폴더 구성
+> 저장소: **https://github.com/car216999/PDF_auto_maker**
+
+오픈소스 LLM·RAG 기반 **PDF 양식 자동 작성 시스템**. 빈 양식 + 컨셉 입력만으로 완성 문서를 생성한다.
+**외부 API 호출 0건 — 완전 로컬.** (Qwen3 8B · nomic-embed-text · PyMuPDF · ChromaDB)
+
+## 처리 흐름
+
 ```
-vm_version/
-├── docs/                          # 사업계획서 텍스트 자료 7건
-│   ├── 01_헬스케어.txt
-│   ├── 02_푸드테크.txt
-│   ├── 03_에듀테크.txt
-│   ├── 04_펫테크.txt
-│   ├── 05_정부_융합서비스_Xray.txt
-│   ├── 06_정부_제조_자성분말.txt
-│   └── 07_정부_지식서비스_부모제어앱.txt
-├── 01_chunking.py                 # 1단계: 청킹 (수정 없이 그대로 사용)
-└── 02_embedding_qdrant_search.py  # 2~4단계: 임베딩+적재+검색 (BGE-M3, Docker Qdrant)
+빈 양식 업로드 → PDF 파싱 → RAG 검색 → LLM 생성 → 좌표 주입 → 미리보기/다운로드
+              (parsing)   (rag)    (generation)  (injection)
 ```
 
-## 실행 순서
+## 시연
 
-### 0. 사전 준비
+빈 견적서 양식에 **컨셉 한 줄**만 입력하면, 사내 문서를 근거로 27개 필드를 채워 완성 PDF를 만든다.
+
+| 입력 — 빈 견적서 양식 | 출력 — 시스템이 채운 완성 문서 |
+|:---:|:---:|
+| ![빈 양식](docs/screenshots/01_blank_form.png) | ![완성 문서](docs/screenshots/02_filled_result.png) |
+
+> 입력 컨셉: *"주식회사 엑시오가 ABC상사에 보내는 클라우드 서버 구축 견적. 수량 2대, 단가 300만원."*
+>
+> 공급자 정보(등록번호·상호·대표자·주소·업태·종목·연락처)는 **사내 문서에서 조회**, 공급가액·부가세·합계금액은 **자동 계산**, 사용하지 않는 품목 행은 **그대로 비움** — 모두 한글 폰트로 좌표에 정밀 주입.
+>
+> *(스크린샷은 `backend/scripts/make_screenshots.py` 로 재생성 가능)*
+
+### 웹 UI — 업로드 → 컨셉 입력 → 미리보기
+
+| 1. 양식 업로드 | 2. 컨셉 입력 | 3. 미리보기·다운로드 |
+|:---:|:---:|:---:|
+| ![업로드](docs/screenshots/ui_1_upload.png) | ![컨셉 입력](docs/screenshots/ui_2_concept.png) | ![미리보기](docs/screenshots/ui_3_preview.png) |
+
+> 미리보기에서 각 값은 **`근거`**(사내 문서에서 찾음) / **`추론`**(모델이 계산·추정)으로 구분 표시되어, 사용자가 신뢰도를 한눈에 보고 수정할 수 있다 — 환각 검수가 UI에 녹아든 부분.
+
+### 다른 문서 유형 — 기획서 → 사업계획서 신청서
+
+같은 시스템으로 견적서뿐 아니라 **사업계획서 신청서**도 작성한다. 팀의 기획서를 지식으로 넣으면, 그 내용으로 신청서를 자동으로 채운다.
+
+![사업계획서](docs/screenshots/03_business_plan.png)
+
+> 팀 기획서를 RAG 지식으로 인덱싱 → 사업명·팀·기술스택은 물론 **사업개요·핵심기능·기대효과 같은 문단까지** 기획서 근거로 자동 작성 (근거율 100%). 기획서 13장 활용방안 *"정부지원사업·사업계획서 초안 자동 완성"* 시나리오를 그대로 실현.
+
+## 빠른 시작 — Docker (권장)
+
 ```bash
-# 필요 패키지 설치
-pip install sentence-transformers qdrant-client
-
-# Qdrant를 Docker로 띄우기 (별도 터미널에서 실행, 계속 켜둘 것)
-docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+docker compose up --build
+# 프론트엔드: http://localhost:5173
+# 백엔드 API 문서: http://localhost:8000/docs
 ```
 
-### 1. 청킹 실행
+`ollama → 모델 다운로드 → 백엔드 → 프론트엔드` 순으로 자동 기동한다.
+최초 1회 모델 다운로드(~5GB)가 있고, 이후에는 외부 통신이 없다.
+GPU 사용 시 `docker-compose.yml` 의 `deploy.resources` 주석을 해제한다.
+
+## 빠른 시작 — 로컬 개발
+
 ```bash
-cd vm_version
-python3 01_chunking.py
-```
-- docs/ 폴더의 txt 7개를 읽어서 chunks.json 생성
-- 정상 실행되면 "총 45개 청크 생성" 비슷한 메시지가 나옴 (텍스트를 추가하면 숫자는 달라짐)
+# 0) Ollama + 모델 (최초 1회)
+ollama pull qwen3:8b
+ollama pull nomic-embed-text
 
-### 2. 임베딩 + Qdrant 적재 + 검색 테스트
+# 1) 백엔드
+cd backend
+uv sync
+uv run python -m scripts.index_knowledge        # 사내 문서 인덱싱
+uv run uvicorn app.main:app --port 8000
+
+# 2) 프론트엔드 (다른 터미널)
+cd frontend
+npm install
+npm run dev                                       # http://localhost:5173
+```
+
+## 구조
+
+```
+tooktak/
+├─ backend/          FastAPI — 파싱·RAG·생성·주입·평가
+│  ├─ app/
+│  │  ├─ schemas/    모듈 간 인터페이스 계약
+│  │  ├─ parsing/    PyMuPDF 폼필드·좌표 추출
+│  │  ├─ rag/        청킹·임베딩·ChromaDB 검색
+│  │  ├─ generation/ Ollama(qwen3) 필드값 생성
+│  │  ├─ injection/  좌표 한글 주입·평탄화
+│  │  └─ eval/       KPI 측정 하네스
+│  ├─ scripts/       양식 생성·인덱싱·평가 실행
+│  └─ tests/         37개 (오프라인 빠른 검증)
+├─ frontend/         React + Vite 대시보드
+├─ data/             knowledge(지식) · forms(양식) · chroma(인덱스)
+└─ docker-compose.yml
+```
+
+## KPI (기획서 11장 — 실측)
+
 ```bash
-python3 02_embedding_qdrant_search.py
+cd backend && uv run python -m scripts.run_eval
 ```
-- BGE-M3 모델을 처음 실행 시 자동 다운로드 (약 2GB, 시간 소요 가능)
-- Qdrant Docker 서버에 벡터 저장
-- 미리 넣어둔 5개 테스트 쿼리로 검색 결과 출력
 
-## 컨테이너 테스트와 다른 점
+| KPI (합격선) | 견적서·단순 | 견적서·표준 | 사업계획서 |
+|---|:---:|:---:|:---:|
+| 채움 정확도 (≥ 80%) | 93% | 100% | 100% |
+| 시간 단축 (≥ 50%) | 98% | 99% | 100% |
+| 근거 일치율 (≥ 90%) | 100% | 88%¹ | 100% |
+| 외부 호출 0건 (소켓 실측) | 0건 | 0건 | 0건 |
 
-| 구분 | 컨테이너 테스트 | VM 버전 (이 폴더) |
-|------|----------------|-------------------|
-| 임베딩 모델 | TF-IDF (sklearn, 대체용) | BGE-M3 (실제 모델) |
-| 벡터 차원 | 300 | 1024 |
-| Qdrant 실행 방식 | 인메모리(`:memory:`) | Docker 서버 (데이터 영구 보존) |
+> ¹ 표준 견적서 근거율 88%는 자동 계산값(부가세·합계) 2개 때문 — 값은 정확하나 strict 근거 매칭에서 제외됨. 정직하게 측정값 그대로 보고한다.
 
-## 자주 발생할 수 있는 문제
+## 문서
 
-**Q. "Connection refused" 에러가 난다**
-→ Qdrant Docker가 안 떠 있는 경우입니다. `docker ps`로 컨테이너가 실행 중인지 확인하세요.
+**설계**
+- [시스템 구성도](docs/시스템구성도.md) — 계층 아키텍처 · 처리 흐름 · 배포 구성 (Mermaid)
+- [유스케이스 다이어그램](docs/유스케이스.md) — 액터 · 유스케이스 · 관계
+- [ERD DDL](docs/erd.txt) — aquerytool 임포트용 9개 테이블 스키마
+- [테이블 명세서](docs/테이블명세서.md) — 컬럼 명세 + 관계 요약
 
-**Q. BGE-M3 다운로드가 너무 오래 걸린다 / 안 된다**
-→ 인터넷 연결 상태를 확인하세요. 한 번 받으면 `~/.cache/huggingface` 폴더에 캐시되어 다음부터는 빠릅니다.
+**발표**
+- [발표 정리](docs/발표정리.md) — 슬라이드 구성 · Q&A · 핵심 숫자
+- [발표 대본](docs/발표대본.md) — 슬라이드별 대사 · 데모 내레이션
 
-**Q. 검색 결과가 기대와 다르게 나온다**
-→ 정상입니다. 지금 자료(7건, 45개 청크)는 최소 테스트용입니다. 자료를 늘리거나(LLM 생성 자료 추가),
-   청킹 기준(MAX_CHUNK_LEN)을 조정하면서 결과를 관찰하고 튜닝하는 과정이 필요합니다.
+**모듈·운영**
+- [백엔드 README](backend/README.md) — 구조 · 실행 · API
+- [프론트엔드 README](frontend/README.md) — UI 흐름 · 실행
+- [KPI 평가 하네스](backend/eval/README.md) — 측정 방법 · 데이터셋
+- [월요일 교체 가이드](docs/월요일_교체가이드.md) — 기획서 지식 교체 절차
 
-## 다음 단계 (이후 진행할 것)
-검색된 청크를 실제 LLM(Ollama + Qwen3)에 프롬프트로 넘겨서 PDF 양식 항목을
-자동으로 채우는 단계로 이어집니다. 이 부분은 LLM 담당자와 함께 진행하면 됩니다.
+## 팀
+
+뚝딱(TookTak) — 김세경(총괄·프론트) · 채요한(파싱) · 박은선(RAG) · 이권형(생성·백엔드)

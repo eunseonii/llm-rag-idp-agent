@@ -1,29 +1,19 @@
-# Python
+01_chunking.py
+02_embedding_qdrant_search.py
+04_multi_query.py
+chunks.json
+data/
+frontend/
+03_generation/
+약식기획서_뚝딱팀_v3_보강.pdf
+docker-compose.yml
 __pycache__/
-*.py[cod]
-.venv/
-.pytest_cache/
-
-# Node
-node_modules/
-dist/
-.vite/
-
-# 런타임·생성 데이터 (스크립트로 재생성)
-data/uploads/*
-data/outputs/*
-data/chroma/*
-data/forms/*.pdf
-!**/.gitkeep
-
-# 평가 산출물 (재생성)
-backend/eval/report.json
-
-# 임시·스크래치 파일
-backend/_*.py
-backend/_*.json
-backend/_*.png
-*.local
-
-# 기획 문서 원본 (로컬 보관, 저장소 제외)
-최종기획서_뚝딱.*
+*.pyc
+.env
+backend/app/parsing/
+backend/app/injection/
+backend/app/services/
+backend/app/api/
+backend/app/schemas/
+backend/app/eval/
+frontend/

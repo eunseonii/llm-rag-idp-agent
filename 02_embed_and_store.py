@@ -7,7 +7,7 @@
 """
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 
@@ -21,9 +21,8 @@ def main():
     # 문서 로드
     loader = DirectoryLoader(
         DOCS_DIR,
-        glob="**/*.txt",
-        loader_cls=TextLoader,
-        loader_kwargs={"encoding": "utf-8"}
+        glob="**/*.pdf",
+    	loader_cls=PyMuPDFLoader
     )
     documents = loader.load()
     print(f"로드된 문서: {len(documents)}개")

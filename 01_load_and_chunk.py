@@ -5,7 +5,7 @@
 - RecursiveCharacterTextSplitter로 청킹
 - chunks.json으로 저장
 """
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import json
 import os
@@ -18,9 +18,8 @@ CHUNK_OVERLAP = 50
 def main():
     loader = DirectoryLoader(
         DOCS_DIR,
-        glob="**/*.txt",
-        loader_cls=TextLoader,
-        loader_kwargs={"encoding": "utf-8"}
+        glob="**/*.pdf",
+    	loader_cls=PyMuPDFLoader
     )
     documents = loader.load()
     print(f"로드된 문서: {len(documents)}개")

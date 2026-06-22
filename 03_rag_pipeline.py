@@ -8,8 +8,8 @@
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from langchain_community.llms import Ollama
-from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.prompts import PromptTemplate
+from langchain_classic.retrievers.multi_query import MultiQueryRetriever
+from langchain_core.prompts import PromptTemplate
 
 COLLECTION_NAME = "project_plan_chunks"
 QDRANT_URL = "http://localhost:6333"

@@ -10,7 +10,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import json
 import os
 
-DOCS_DIR = "./docs"
+DOCS_DIR = "./corpus"
 OUT_PATH = "./chunks.json"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50

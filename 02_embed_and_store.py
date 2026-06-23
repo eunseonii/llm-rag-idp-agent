@@ -11,7 +11,7 @@ from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 
-DOCS_DIR = "./docs"
+DOCS_DIR = "./corpus"
 COLLECTION_NAME = "project_plan_chunks"
 QDRANT_URL = "http://localhost:6333"
 CHUNK_SIZE = 500

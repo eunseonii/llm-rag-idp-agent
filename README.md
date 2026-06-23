@@ -1,139 +1,50 @@
-# 뚝딱 (TookTak)
+# LLM, RAG 기반 지능형 문서처리(IDP) 에이전트 개발
 
-[![GitHub](https://img.shields.io/badge/GitHub-PDF__auto__maker-181717?logo=github&logoColor=white)](https://github.com/car216999/PDF_auto_maker)
-[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.137-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Ollama](https://img.shields.io/badge/Ollama-Qwen3_8B-000000?logo=ollama&logoColor=white)](https://ollama.com/)
-[![ChromaDB](https://img.shields.io/badge/Vector_DB-ChromaDB-FF6F61)](https://www.trychroma.com/)
-[![Tests](https://img.shields.io/badge/tests-37_passing-success)](backend/tests)
-[![External calls](https://img.shields.io/badge/외부_호출-0건-brightgreen)](#)
+> 팀 프로젝트 뚝딱(TookTak)의 RAG 파이프라인 담당 파트입니다.
 
-> 저장소: **https://github.com/car216999/PDF_auto_maker**
+## 담당 역할
+4인 팀 프로젝트에서 **RAG 파이프라인 전담 개발**
+- 문서 청킹 및 전처리
+- BGE-M3 임베딩 + Qdrant 벡터 저장소 구축
+- LangChain 기반 RAG 파이프라인 설계 및 구현
+- Ollama + Qwen3:8b 로컬 LLM 연동
+- FastAPI 연동용 generate_sections() 인터페이스 설계
 
-오픈소스 LLM·RAG 기반 **PDF 양식 자동 작성 시스템**. 빈 양식 + 컨셉 입력만으로 완성 문서를 생성한다.
-**외부 API 호출 0건 — 완전 로컬.** (Qwen3 8B · nomic-embed-text · PyMuPDF · ChromaDB)
+## 기술 스택
+| 구분 | 기술 |
+|------|------|
+| 임베딩 | BGE-M3 |
+| 벡터DB | Qdrant (Docker) |
+| RAG 프레임워크 | LangChain |
+| LLM | Ollama + Qwen3:8b |
+| PDF 처리 | PyMuPDF |
+| 백엔드 | FastAPI |
+| 프론트엔드 | React 18 |
 
-## 처리 흐름
+## 파이프라인 구조
+PDF 코퍼스 → 청킹 → BGE-M3 임베딩 → Qdrant 저장
+                                          ↓
+사용자 입력(컨셉) → 쿼리 생성 → 유사도 검색 → Qwen3:8b → 섹션별 텍스트 생성
 
-```
-빈 양식 업로드 → PDF 파싱 → RAG 검색 → LLM 생성 → 좌표 주입 → 미리보기/다운로드
-              (parsing)   (rag)    (generation)  (injection)
-```
+## 파일 구조
+- 01_load_and_chunk.py       : PDF 로딩 및 청킹
+- 02_embed_and_store.py      : BGE-M3 임베딩 + Qdrant 저장
+- 03_rag_pipeline.py         : RAG + LLM 텍스트 생성 (FastAPI 연동용)
+- backend/app/rag/           : FastAPI 연동 RAG 모듈
+- docs/TROUBLESHOOTING.md    : 트러블슈팅 기록
+- docs/development-log.md    : 개발 과정 기록
 
-## 시연
+## 코퍼스 구성
+- 실제 프로젝트 기획서 PDF 3개
+- LLM 생성 문서 제외 (환각 증폭 방지)
+- SPRI AI 산업 동향 보고서 2개 (2024~2025)
+- 총 1305개 청크
+- 현재 IT/AI 도메인 중심 구성, 추후 도메인 확장 예정
 
-빈 견적서 양식에 **컨셉 한 줄**만 입력하면, 사내 문서를 근거로 27개 필드를 채워 완성 PDF를 만든다.
-
-| 입력 — 빈 견적서 양식 | 출력 — 시스템이 채운 완성 문서 |
-|:---:|:---:|
-| ![빈 양식](docs/screenshots/01_blank_form.png) | ![완성 문서](docs/screenshots/02_filled_result.png) |
-
-> 입력 컨셉: *"주식회사 엑시오가 ABC상사에 보내는 클라우드 서버 구축 견적. 수량 2대, 단가 300만원."*
->
-> 공급자 정보(등록번호·상호·대표자·주소·업태·종목·연락처)는 **사내 문서에서 조회**, 공급가액·부가세·합계금액은 **자동 계산**, 사용하지 않는 품목 행은 **그대로 비움** — 모두 한글 폰트로 좌표에 정밀 주입.
->
-> *(스크린샷은 `backend/scripts/make_screenshots.py` 로 재생성 가능)*
-
-### 웹 UI — 업로드 → 컨셉 입력 → 미리보기
-
-| 1. 양식 업로드 | 2. 컨셉 입력 | 3. 미리보기·다운로드 |
-|:---:|:---:|:---:|
-| ![업로드](docs/screenshots/ui_1_upload.png) | ![컨셉 입력](docs/screenshots/ui_2_concept.png) | ![미리보기](docs/screenshots/ui_3_preview.png) |
-
-> 미리보기에서 각 값은 **`근거`**(사내 문서에서 찾음) / **`추론`**(모델이 계산·추정)으로 구분 표시되어, 사용자가 신뢰도를 한눈에 보고 수정할 수 있다 — 환각 검수가 UI에 녹아든 부분.
-
-### 다른 문서 유형 — 기획서 → 사업계획서 신청서
-
-같은 시스템으로 견적서뿐 아니라 **사업계획서 신청서**도 작성한다. 팀의 기획서를 지식으로 넣으면, 그 내용으로 신청서를 자동으로 채운다.
-
-![사업계획서](docs/screenshots/03_business_plan.png)
-
-> 팀 기획서를 RAG 지식으로 인덱싱 → 사업명·팀·기술스택은 물론 **사업개요·핵심기능·기대효과 같은 문단까지** 기획서 근거로 자동 작성 (근거율 100%). 기획서 13장 활용방안 *"정부지원사업·사업계획서 초안 자동 완성"* 시나리오를 그대로 실현.
-
-## 빠른 시작 — Docker (권장)
-
-```bash
-docker compose up --build
-# 프론트엔드: http://localhost:5173
-# 백엔드 API 문서: http://localhost:8000/docs
-```
-
-`ollama → 모델 다운로드 → 백엔드 → 프론트엔드` 순으로 자동 기동한다.
-최초 1회 모델 다운로드(~5GB)가 있고, 이후에는 외부 통신이 없다.
-GPU 사용 시 `docker-compose.yml` 의 `deploy.resources` 주석을 해제한다.
-
-## 빠른 시작 — 로컬 개발
-
-```bash
-# 0) Ollama + 모델 (최초 1회)
-ollama pull qwen3:8b
-ollama pull nomic-embed-text
-
-# 1) 백엔드
-cd backend
-uv sync
-uv run python -m scripts.index_knowledge        # 사내 문서 인덱싱
-uv run uvicorn app.main:app --port 8000
-
-# 2) 프론트엔드 (다른 터미널)
-cd frontend
-npm install
-npm run dev                                       # http://localhost:5173
-```
-
-## 구조
-
-```
-tooktak/
-├─ backend/          FastAPI — 파싱·RAG·생성·주입·평가
-│  ├─ app/
-│  │  ├─ schemas/    모듈 간 인터페이스 계약
-│  │  ├─ parsing/    PyMuPDF 폼필드·좌표 추출
-│  │  ├─ rag/        청킹·임베딩·ChromaDB 검색
-│  │  ├─ generation/ Ollama(qwen3) 필드값 생성
-│  │  ├─ injection/  좌표 한글 주입·평탄화
-│  │  └─ eval/       KPI 측정 하네스
-│  ├─ scripts/       양식 생성·인덱싱·평가 실행
-│  └─ tests/         37개 (오프라인 빠른 검증)
-├─ frontend/         React + Vite 대시보드
-├─ data/             knowledge(지식) · forms(양식) · chroma(인덱스)
-└─ docker-compose.yml
-```
-
-## KPI (기획서 11장 — 실측)
-
-```bash
-cd backend && uv run python -m scripts.run_eval
-```
-
-| KPI (합격선) | 견적서·단순 | 견적서·표준 | 사업계획서 |
-|---|:---:|:---:|:---:|
-| 채움 정확도 (≥ 80%) | 93% | 100% | 100% |
-| 시간 단축 (≥ 50%) | 98% | 99% | 100% |
-| 근거 일치율 (≥ 90%) | 100% | 88%¹ | 100% |
-| 외부 호출 0건 (소켓 실측) | 0건 | 0건 | 0건 |
-
-> ¹ 표준 견적서 근거율 88%는 자동 계산값(부가세·합계) 2개 때문 — 값은 정확하나 strict 근거 매칭에서 제외됨. 정직하게 측정값 그대로 보고한다.
-
-## 문서
-
-**설계**
-- [시스템 구성도](docs/시스템구성도.md) — 계층 아키텍처 · 처리 흐름 · 배포 구성 (Mermaid)
-- [유스케이스 다이어그램](docs/유스케이스.md) — 액터 · 유스케이스 · 관계
-- [ERD DDL](docs/erd.txt) — aquerytool 임포트용 9개 테이블 스키마
-- [테이블 명세서](docs/테이블명세서.md) — 컬럼 명세 + 관계 요약
-
-**발표**
-- [발표 정리](docs/발표정리.md) — 슬라이드 구성 · Q&A · 핵심 숫자
-- [발표 대본](docs/발표대본.md) — 슬라이드별 대사 · 데모 내레이션
-
-**모듈·운영**
-- [백엔드 README](backend/README.md) — 구조 · 실행 · API
-- [프론트엔드 README](frontend/README.md) — UI 흐름 · 실행
-- [KPI 평가 하네스](backend/eval/README.md) — 측정 방법 · 데이터셋
-- [월요일 교체 가이드](docs/월요일_교체가이드.md) — 기획서 지식 교체 절차
-
-## 팀
-
-뚝딱(TookTak) — 김세경(총괄·프론트) · 채요한(파싱) · 박은선(RAG) · 이권형(생성·백엔드)
+## 개발 현황
+- [x] PDF 코퍼스 구성 및 청킹 (121개 청크)
+- [x] BGE-M3 임베딩 + Qdrant 인덱싱
+- [x] RAG + LLM 텍스트 생성 동작 확인 (섹션별 텍스트 생성)
+- [ ] FastAPI 연동
+- [ ] 실제 PDF 양식 필드 매핑 검증
+- [ ] 프롬프트 최적화 (수치 환각 억제)

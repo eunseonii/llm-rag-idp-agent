@@ -10,18 +10,19 @@
 4인 팀 프로젝트에서 **RAG 파이프라인 전담 개발**
 
 - KR 2026 규정 PDF 파싱 및 전처리 (PUA 문자 제거, 파서 이중화)
-- BGE-M3 Dense+Sparse 임베딩 + Qdrant 벡터 저장소 구축
+- BGE-M3 Dense+Sparse 임베딩 + Qdrant 벡터 저장소 구축 (v1)
+- Granite-embedding + fastembed BM25 + jina-reranker ONNX 전환 (v2)
 - 하이브리드 검색 구현 (Dense + Sparse + RRF 리랭킹)
-- BGE-Reranker 기반 크로스인코더 리랭킹 도입
-- LangChain 기반 RAG 파이프라인 설계 및 구현
+- recall@k 기반 검색 품질 평가 및 두 버전 성능 비교
 - Ollama + Qwen3:8b 로컬 LLM 연동
-- FastAPI 연동용 `generate_sections()` 인터페이스 설계
 
 ---
 
-## 왜 만들었나
+## 개발 배경
 
-뚝딱은 빈 양식 PDF에 참고자료를 기반으로 내용을 자동 생성해주는 온프레미스 문서처리 도구입니다. 핵심은 참고자료에서 관련 내용을 정확하게 찾아오는 검색 품질이었고, 단순 키워드 검색이 아닌 의미 기반 하이브리드 검색이 필요했습니다.
+뚝딱은 빈 양식 PDF에 사내 도메인 문서를 근거로 내용을 자동 생성해주는 온프레미스 문서처리 도구입니다.
+
+핵심은 **사전에 구축된 도메인 코퍼스에서 관련 내용을 정확하게 찾아오는 검색 품질**이었고, 단순 키워드 검색이 아닌 의미 기반 하이브리드 검색이 필요했습니다.
 
 KR 규정처럼 수식·기호가 많고 전문 용어가 밀집된 문서에서 검색 품질을 높이기 위해 이 파이프라인을 직접 설계하고 구현했습니다.
 
@@ -30,31 +31,46 @@ KR 규정처럼 수식·기호가 많고 전문 용어가 밀집된 문서에서
 ## 시스템 아키텍처
 
 ```
-[사용자 업로드]
-빈 양식 PDF + 참고자료 PDF + 컨셉 입력
+[사전 구축 단계 - 개발 시]
+KR 규정 PDF 10개 (총 6,732청크)
         ↓
-[전처리]                                        
-참고자료 파싱 (PyMuPDF → pdfplumber 이중화)
+파싱 (PyMuPDF → pdfplumber 이중화)
 → PUA 문자 제거 → 500자 청킹 (overlap=50)
         ↓
-[Qdrant - 동적 인덱싱]                          
-BGE-M3 Dense+Sparse 임베딩
-→ user_{id} 컬렉션 생성 → 저장 (세션 유지)
+임베딩 (BGE-M3 / Granite+BM25)
         ↓
-[하이브리드 검색 + Reranker]                    
-양식 필드별 쿼리
-→ Dense + Sparse + RRF → BGE-Reranker
+Qdrant kr_rules_study 컬렉션 저장 (고정)
+
+[서비스 실행 단계 - 사용자 요청 시]
+사용자: 빈 양식 PDF + 컨셉/키워드 입력
         ↓
-[Qwen3:8b 생성]
-컨텍스트 + 컨셉 → 섹션 텍스트 생성 (Ollama)
+양식 필드 파악 → 동적 쿼리 생성
         ↓
-[PostgreSQL - 이력 저장]
-생성 결과 + 메타데이터 + user_id
-+ Qdrant 컬렉션 참조 저장
+사전 구축된 kr_rules_study 검색
+→ Dense + Sparse + RRF → Reranker
         ↓
-[PDF 출력]
-완성된 PDF 반환
+Qwen3:8b (Ollama) → 필드 내용 생성 → PDF 반환
 ```
+
+> **설계 원칙:** 기반 지식은 사전에 구축된 코퍼스에서 가져오되, 사용자의 실시간 입력을 반영해 쿼리를 동적으로 생성하는 하이브리드 RAG 구조입니다.
+
+---
+
+## 버전 변천과 기술 선택 이유
+
+### v1 — BGE-M3
+
+Dense+Sparse를 단일 모델로 동시 추출할 수 있어 채택했으나, CPU 환경에서 배치당 60~70초, 전체 인덱싱에 약 3시간 47분 소요. WSL로 환경을 바꿔도 약 2시간으로 근본 해결이 안 되며 모델 자체(1024차원)가 무거운 것이 원인. 팀 운영 서버(Ollama 0.24)에서 NaN 버그도 확인.
+
+### v2 — Granite + fastembed (진행 중)
+
+| 항목 | v1 | v2 |
+|------|----|----|
+| 임베딩 | BGE-M3 1024d | Granite-embedding 768d (Ollama) |
+| Sparse | BGE-M3 내장 | fastembed BM25 |
+| 리랭커 | bge-reranker | jina-reranker-v2 ONNX |
+
+> 동일 조건(PDF 10개, 500자 청킹)에서 recall@k를 비교해 순수한 스택 차이로 인한 성능 변화를 측정할 예정입니다.
 
 ---
 
@@ -62,12 +78,11 @@ BGE-M3 Dense+Sparse 임베딩
 
 | 구분 | 기술 |
 |------|------|
-| 임베딩 | BGE-M3 (Dense + Sparse) |
+| 임베딩 | BGE-M3 (v1) / Granite-embedding + fastembed (v2) |
 | 벡터DB | Qdrant (Docker) |
-| 검색 | 하이브리드 검색 (RRF) + BGE-Reranker |
+| 리랭커 | bge-reranker (v1) / jina-reranker-v2 ONNX (v2) |
 | LLM | Ollama + Qwen3:8b |
 | PDF 처리 | PyMuPDF + pdfplumber |
-| 백엔드 | FastAPI |
 
 ---
 
@@ -76,39 +91,13 @@ BGE-M3 Dense+Sparse 임베딩
 ```
 01_parse_and_chunk.py   PDF 파싱 + PUA 제거 + 청킹
         ↓
-02_embed_and_store.py   BGE-M3 Dense+Sparse 임베딩 → Qdrant 저장
+02_embed_and_store.py   임베딩 → Qdrant 저장
         ↓
 03_hybrid_search.py     Dense + Sparse + RRF 하이브리드 검색
         ↓
-04_evaluate.py          recall@k 평가
+04_evaluate.py          recall@k 평가 (v1 vs v2 비교)
         ↓
-05_reranker.py          BGE-Reranker 크로스인코더 리랭킹
-        ↓
-06_rag_pipeline.py      RAG + LLM 텍스트 생성 (FastAPI 연동)
-```
-
----
-
-## 파일 구조
-
-```
-kr-rules-rag/
-├── src/
-│   ├── 01_parse_and_chunk.py
-│   ├── 02_embed_and_store.py
-│   ├── 03_hybrid_search.py
-│   ├── 04_evaluate.py
-│   ├── 05_reranker.py
-│   ├── 06_rag_pipeline.py
-│   └── app/main.py
-├── data/
-│   ├── raw/                    KR 규정 PDF 원본 10개
-│   └── chunks/                 파싱 결과 JSONL (총 6,732청크)
-├── docs/
-│   ├── TROUBLESHOOTING.md
-│   └── development-log.md
-└── scripts/
-    └── download_corpus.sh
+05_reranker_bench.py    리랭커 속도·분별력 벤치마크
 ```
 
 ---
@@ -132,49 +121,18 @@ kr-rules-rag/
 | 해상사이버보안시스템지침.pdf | 기타기술규칙 | 88 |
 | **합계** | | **6,732** |
 
-> LLM 생성 문서는 코퍼스에서 제외했습니다. 환각 내용이 검색 결과에 섞이면 생성 품질이 떨어지기 때문입니다.
-
 ---
 
-## 트러블슈팅
+## 트러블슈팅 요약
 
-개발 과정에서 직접 발견하고 해결한 이슈들입니다.
+뚝딱 RAG 파이프라인은 팀 서버 환경에서 자동화된 방식으로 구축되었습니다. 개인 학습 목적으로 동일한 파이프라인을 로컬 VM에서 단계별로 직접 재현하면서, 자동화 환경에서는 묻혀 넘어갔던 이슈들을 직접 손으로 부딪히며 원인까지 파악했습니다.
 
-### 1. PUA 문자로 인한 임베딩 400 에러
-
-**증상:** 임베딩 API 호출 시 400 에러 발생
-
-**원인:** PDF 제작 도구가 수식 기호를 유니코드 사적 영역(U+E000~U+F8FF)에 임의 매핑. 3편_선체구조.pdf에서 `규칙길이(\ue00b)`, `흘수(\ue0e8\ue0f7)` 처럼 추출됨. 10개 중 8개 파일에서 발견, 3편이 23,937개로 최다.
-
-**해결:** 파싱 단계에서 PUA 문자 제거
-
-```python
-PUA_PATTERN = re.compile(r"[\uE000-\uF8FF]")
-cleaned = PUA_PATTERN.sub("", text)
-```
-
-### 2. 파일명 괄호로 인한 curl 업로드 실패
-
-**증상:**
-```
-bash: 예기치 않은 `(' 토큰 주변에서 문법 오류
-```
-
-**원인:** `7편_전용선박(5,6장).pdf` 파일명의 `()`를 쉘이 서브쉘 토큰으로 해석
-
-**해결:** 작은따옴표로 경로 전체를 감싸기
-
-```bash
-# 실패
-curl -F file=@7편_전용선박(5,6장).pdf http://localhost:8000/upload
-
-# 성공
-curl -F 'file=@7편_전용선박(5,6장).pdf' http://localhost:8000/upload
-```
-
-### 3. 리랭커 속도 문제 (CPU 환경)
-
-BGE-Reranker-v2-m3(568MB)가 CPU에서 ~37초/질의로 실사용 불가. BGE-Reranker-base(278MB)로 교체 후 ~9초로 단축. `fetch_k=12`, `max_len=256`, `threads=16` 고정.
+| # | 문제 | 원인 | 해결 |
+|---|------|------|------|
+| 1 | Qdrant 400 에러 | PUA 문자(U+E000~U+F8FF) payload 포함 | 정규식으로 파싱 단계에서 제거 |
+| 2 | curl 업로드 문법 오류 | 파일명 `()` 를 쉘이 서브쉘로 해석 | 작은따옴표로 경로 감싸기 |
+| 3 | Qdrant 400 에러 | chunk_id가 문자열 (정수/UUID만 허용) | 전역 카운터로 정수 ID 부여 |
+| 4 | 디스크 100% 초과 | GPU용 torch + 캐시 누적 | CPU 전용 torch 재설치, 캐시 정리 |
 
 자세한 내용 → [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
@@ -184,13 +142,12 @@ BGE-Reranker-v2-m3(568MB)가 CPU에서 ~37초/질의로 실사용 불가. BGE-Re
 
 - [x] KR 2026 규정 PDF 코퍼스 구성
 - [x] PDF 파싱 + 청킹 (PUA 문자 처리 포함) → 6,732청크 생성
-- [ ] BGE-M3 Dense+Sparse 임베딩 + Qdrant 인덱싱
+- [x] v1 BGE-M3 임베딩 파이프라인 구현 및 속도 한계 확인
+- [ ] v2 Granite + fastembed 임베딩 → Qdrant 인덱싱
 - [ ] 하이브리드 검색 (Dense+Sparse+RRF) 구현
-- [ ] BGE-Reranker 도입 및 속도 최적화
+- [ ] 리랭커 도입 및 속도 최적화
+- [ ] recall@k 기반 v1 vs v2 성능 비교
 - [ ] RAG + LLM 텍스트 생성 동작 확인
-- [ ] FastAPI 연동
-- [ ] 실제 PDF 양식 필드 매핑 검증
-- [ ] 프롬프트 최적화 (수치 환각 억제)
 
 ---
 

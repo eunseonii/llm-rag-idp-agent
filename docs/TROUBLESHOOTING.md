@@ -368,24 +368,25 @@ qdrant-client 1.18.0에서 `.search()` 메서드가 완전히 제거되고 `.que
 `.search()` 를 `.query_points()` 로 교체하고 import도 수정했습니다.
 
 기존:
-````python
-    hits = client.search(
-        collection_name=COLLECTION_NAME,
-        query_vector=NamedVector(name="dense", vector=vector),
-        limit=top_k,
+```python
+hits = client.search(
+    collection_name=COLLECTION_NAME,
+    query_vector=NamedVector(name="dense", vector=vector),
+    limit=top_k,
     )
-````
+```
 변경:
-````python
-    response = client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=vector,
-        using="dense",
-        limit=top_k,
-        with_payload=True,
-    )
-    results = response.points
-```"""
+```python
+response = client.query_points(
+    collection_name=COLLECTION_NAME,
+    query=vector,
+    using="dense",
+    limit=top_k,
+    with_payload=True,
+)
+results = response.points
+```
+
 ### 검증
 
 수정 후 Dense/Sparse 검색 모두 정상 동작, 샘플 질의 3개 결과 출력 확인했습니다.
@@ -403,10 +404,10 @@ qdrant-client 1.18.0에서 `.search()` 메서드가 완전히 제거되고 `.que
 ### 문제 상황
 
 04_evaluate.py에서 qwen3:8b로 질문을 자동 생성하는 도중 타임아웃 에러가 발생했습니다.
-
-    HTTPConnectionPool(host='localhost', port=11434):
-    Read timed out. (read timeout=60)
-
+```
+HTTPConnectionPool(host='localhost', port=11434):
+Read timed out. (read timeout=60)
+```
 ### 재현 과정
 
 Ollama API로 qwen3:8b에 질문 생성을 요청했습니다.
@@ -418,11 +419,12 @@ qwen3:8b는 기본적으로 thinking 모드가 활성화되어 있습니다.
 응답을 생성하기 전에 내부 추론 과정을 먼저 수행하는데, 이 과정이 60초를 초과했습니다.
 
 qwen3:8b 응답 구조:
-    <think>
-      [내부 추론 과정 - 수십 초 소요]
-    </think>
-    실제 답변
-
+```
+<think>
+[내부 추론 과정 - 수십 초 소요]
+</think>
+실제 답변
+```
 ### 해결 과정
 
 thinking 모드를 끄고 타임아웃을 늘렸습니다.

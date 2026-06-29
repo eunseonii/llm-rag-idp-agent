@@ -6,3 +6,4 @@ data/chunks/
 logs/
 nohup.out
 .env
+data/eval_set.jsonl

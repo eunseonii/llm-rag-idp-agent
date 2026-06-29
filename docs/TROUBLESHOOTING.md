@@ -13,6 +13,9 @@
 | 4 | 파일명 괄호로 인한 쉘 문법 오류 | 환경 | 해결 |
 | 5 | chunk_id 문자열로 인한 Qdrant 400 에러 | 임베딩 | 해결 |
 | 6 | 디스크 100% 초과로 인한 패키지 설치 실패 | 환경 | 해결 |
+| 7 | qdrant-client 버전 업데이트로 인한 `.search()` API 제거 | 검색 | 해결 |
+| 8 | qwen3:8b thinking 모드로 인한 타임아웃 | 평가 | 해결 |
+| 9 | BGE-M3 NaN 버그 — 환경 차이로 인한 미재현 | 임베딩 | 확인 |
 
 ---
 
@@ -328,3 +331,170 @@ df -h /home
 ### 배운 점
 
 GPU 없는 환경에서 torch를 설치할 때는 반드시 CPU 전용 인덱스를 지정해야 합니다. 기본 설치 시 불필요한 nvidia 라이브러리가 수GB씩 딸려옵니다. VMware는 디스크가 고정 할당이라 WSL 대비 공간 관리가 더 중요하며, `du -sh`로 디렉토리별 용량을 추적해 원인을 찾는 접근이 효과적이었습니다.
+
+
+---
+
+
+## #7 qdrant-client 버전 업데이트로 인한 `.search()` API 제거
+
+### 문제 상황
+
+03_hybrid_search.py 실행 시 Qdrant 검색 함수에서 에러가 발생했습니다.
+
+```
+AttributeError: 'QdrantClient' object has no attribute 'search'
+```
+
+### 재현 과정
+
+기존 코드에서 `.search()` 메서드를 사용해 Dense/Sparse 검색을 구현했습니다.
+
+### 원인 분석
+
+qdrant-client 버전을 확인했습니다.
+
+- pip show qdrant-client → Version: 1.18.0
+- hasattr(QdrantClient, 'search') → False
+
+qdrant-client 1.18.0에서 `.search()` 메서드가 완전히 제거되고 `.query_points()`로 대체됐습니다.
+
+가설 검증 과정:
+- 가설 1: 가상환경 미활성화로 인한 버전 불일치 → 틀림 (venv 활성화 후에도 동일 에러)
+- 가설 2: qdrant-client 버전 업데이트로 API 변경 → 정답 (버전 확인으로 검증)
+
+### 해결 과정
+
+`.search()` 를 `.query_points()` 로 교체하고 import도 수정했습니다.
+
+기존:
+````python
+    hits = client.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=NamedVector(name="dense", vector=vector),
+        limit=top_k,
+    )
+````
+변경:
+````python
+    response = client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=vector,
+        using="dense",
+        limit=top_k,
+        with_payload=True,
+    )
+    results = response.points
+```"""
+### 검증
+
+수정 후 Dense/Sparse 검색 모두 정상 동작, 샘플 질의 3개 결과 출력 확인했습니다.
+
+### 배운 점
+
+오픈소스 라이브러리는 버전 업데이트로 API가 제거되거나 변경될 수 있습니다.
+에러 발생 시 라이브러리 버전을 먼저 확인하고, 공식 문서에서 대체 API를 찾는 것이 효율적입니다.
+특히 메이저/마이너 버전이 올라갈 때는 breaking change가 포함될 수 있어 주의가 필요합니다.
+
+---
+
+## #8 qwen3:8b thinking 모드로 인한 타임아웃
+
+### 문제 상황
+
+04_evaluate.py에서 qwen3:8b로 질문을 자동 생성하는 도중 타임아웃 에러가 발생했습니다.
+
+    HTTPConnectionPool(host='localhost', port=11434):
+    Read timed out. (read timeout=60)
+
+### 재현 과정
+
+Ollama API로 qwen3:8b에 질문 생성을 요청했습니다.
+timeout=60으로 설정했으나 첫 번째 요청에서 60초가 지나도 응답이 오지 않아 타임아웃이 발생했습니다.
+
+### 원인 분석
+
+qwen3:8b는 기본적으로 thinking 모드가 활성화되어 있습니다.
+응답을 생성하기 전에 내부 추론 과정을 먼저 수행하는데, 이 과정이 60초를 초과했습니다.
+
+qwen3:8b 응답 구조:
+    <think>
+      [내부 추론 과정 - 수십 초 소요]
+    </think>
+    실제 답변
+
+### 해결 과정
+
+thinking 모드를 끄고 타임아웃을 늘렸습니다.
+```python
+    json={
+        "model": "qwen3:8b",
+        "prompt": prompt,
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 50,
+        },
+    },
+    timeout=120,
+```
+응답에 태그가 남아있을 경우를 대비한 파싱 로직도 추가했습니다.
+    ```python
+    if "</think>" in question:
+        question = question.split("</think>")[-1].strip()
+    ```
+### 검증
+
+수정 후 20개 질문 생성 약 10분 소요, 타임아웃 없이 전체 완료 확인했습니다.
+
+### 배운 점
+
+qwen3:8b는 thinking 모드가 기본값으로 활성화되어 있어 단순한 작업에도 불필요하게 긴 추론 과정이 수행됩니다.
+질문 생성처럼 짧은 응답이 필요한 경우 think: False로 비활성화해야 합니다.
+LLM API를 사용할 때는 모델별 기본 동작 방식을 사전에 파악하는 것이 중요합니다.
+
+---
+
+## #9 BGE-M3 NaN 버그 — 환경 차이로 인한 미재현
+
+### 문제 상황
+
+뚝딱 프로젝트 운영 환경(Ollama 0.24)에서 BGE-M3가 NaN 벡터를 반환해 검색이 불가능한 상태가 발생했습니다.
+동일한 파이프라인을 개인 VM에서 재현하는 과정에서 이 버그가 재현되는지 확인이 필요했습니다.
+
+### 재현 과정
+
+BGE-M3로 6,732청크를 임베딩해 kr_rules_bge 컬렉션에 저장 후,
+저장된 벡터에 NaN이 포함됐는지 직접 검증했습니다.
+
+### 원인 분석
+
+두 환경의 차이를 비교했습니다.
+
+    뚝딱 프로젝트 운영 환경: Ollama 0.24 → BGE-M3 NaN 반환
+    개인 VM 환경: Ollama 0.30.7 → BGE-M3 정상 동작
+
+Ollama 0.24의 특정 버그로 추정됩니다.
+PDF 개수(뚝딱 프로젝트 77종 vs 개인 VM 10개)나 청크 수 차이는 원인이 아닙니다.
+NaN 버그는 데이터 양이 아닌 모델과 Ollama 버전 간의 궁합 문제이기 때문입니다.
+
+### 검증
+
+실제 벡터값으로 직접 NaN 여부를 확인했습니다.
+
+id=1 NaN=False 샘플=[-0.0132, 0.0088, -0.0145, -0.0297, 0.0149]
+id=2 NaN=False 샘플=[-0.0309, -0.0011, -0.0143, -0.0384, 0.0178]
+id=3 NaN=False 샘플=[0.0072, 0.003, -0.0119, -0.0436, 0.0094]
+
+6,732개 전체 저장 완료, NaN 없음 확인했습니다.
+
+### 배운 점
+
+같은 코드도 라이브러리 버전에 따라 동작이 달라질 수 있습니다.
+버그를 단순히 재현 안 됨으로 넘기지 않고 환경 차이를 분석하고
+실제 벡터값으로 검증하는 과정이 중요합니다.
+협업 환경에서는 라이브러리 버전을 requirements.txt나 pyproject.toml로
+명시해 환경 차이로 인한 버그를 예방해야 합니다.
+ENDOFFILE
+
